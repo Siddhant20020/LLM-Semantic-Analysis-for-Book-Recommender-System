@@ -1,0 +1,18 @@
+# Core
+numpy==1.26.4
+pandas==2.2.2
+
+# App
+streamlit==1.31.1
+
+# Embeddings
+sentence-transformers==2.6.1
+transformers==4.38.2
+torch==2.2.1
+
+# Vector DB
+chromadb==0.4.22
+
+# Utilities
+tqdm==4.66.2
+python-dotenv==1.0.1
