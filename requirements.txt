@@ -16,3 +16,5 @@ chromadb==0.4.22
 # Utilities
 tqdm==4.66.2
 python-dotenv==1.0.1
+
+

@@ -5,38 +5,62 @@ import chromadb
 from chromadb.config import Settings
 from sentence_transformers import SentenceTransformer
 
+
+
 # =====================================================
 # PAGE CONFIG
 # =====================================================
-st.set_page_config(page_title="AI Book Recommendation", layout="wide")
+st.set_page_config(
+    page_title="Semantic Based Book Recommendation",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
 # =====================================================
-# CSS (FIXED HEIGHT + GRID)
+# CSS
 # =====================================================
 st.markdown("""
 <style>
+section[data-testid="stSidebar"] > div {
+    padding-top: 1rem;
+}
+
+.search-card {
+    background: #0d1117;
+    padding: 14px;
+    border-radius: 12px;
+    border: 1px solid #30363d;
+}
+
 .book-card {
     background: #161b22;
-    border-radius: 12px;
+    border-radius: 14px;
     padding: 12px;
-    height: 380px;
+    height: 440px;
     display: grid;
-    grid-template-rows: 180px 48px 18px auto;
-    gap: 6px;
-    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    grid-template-rows: 200px 48px 18px auto;
+    gap: 8px;
+    transition: transform 0.2s ease;
 }
+
 .book-card:hover {
     transform: translateY(-4px);
-    box-shadow: 0 10px 25px rgba(0,0,0,0.4);
 }
+
 .book-img {
     display: flex;
     justify-content: center;
     align-items: center;
+    background: #0d1117;
+    border-radius: 10px;
 }
+
 .book-img img {
     max-height: 180px;
+    max-width: 100%;
+    object-fit: contain;
 }
+
 .book-title {
     font-size: 14px;
     font-weight: 600;
@@ -45,12 +69,20 @@ st.markdown("""
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
 }
+
 .book-author {
     font-size: 12px;
     color: #9ca3af;
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
+}
+
+.emotion-box {
+    background: #0d1117;
+    padding: 10px;
+    border-radius: 10px;
+    margin-bottom: 6px;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -65,11 +97,11 @@ FALLBACK_IMAGE = "cover-not-found.jpg"
 PAGE_SIZE = 8
 
 EMOTION_MAP = {
-    "Happy": "joy",
-    "Sad": "sadness",
-    "Angry": "anger",
-    "Suspenseful": "fear",
-    "Surprising": "surprise",
+    "Joy 😊": "joy",
+    "Sadness 😢": "sadness",
+    "Anger 😡": "anger",
+    "Fear 😱": "fear",
+    "Surprise 😮": "surprise",
 }
 
 # =====================================================
@@ -139,23 +171,33 @@ def populate_once():
 populate_once()
 
 # =====================================================
-# RECOMMEND
+# HYBRID RECOMMENDER (FIXED)
 # =====================================================
-def recommend(query, category, emotion):
+def recommend(query, category, emotion_col):
     qemb = model.encode([query])
-    res = collection.query(query_embeddings=qemb, n_results=50)
-    df = books_df[books_df["isbn13"].isin(res["ids"][0])]
+    res = collection.query(query_embeddings=qemb, n_results=60)
+
+    ids = res["ids"][0]
+    df = books_df[books_df["isbn13"].isin(ids)].copy()
+
+    # Preserve semantic rank
+    df["semantic_score"] = df["isbn13"].apply(lambda x: 1 - ids.index(x) / len(ids))
+
+    if emotion_col:
+        df["emotion_score"] = df[emotion_col]
+    else:
+        df["emotion_score"] = 0.0
+
+    df["final_score"] = 0.75 * df["semantic_score"] + 0.25 * df["emotion_score"]
 
     if category != "All":
         df = df[df["simple_categories"] == category]
-    if emotion != "All":
-        df = df.sort_values(EMOTION_MAP[emotion], ascending=False)
 
-    return df.reset_index(drop=True)
+    return df.sort_values("final_score", ascending=False).reset_index(drop=True)
 
 def similar_books(desc, isbn):
     emb = model.encode([desc])
-    res = collection.query(query_embeddings=emb, n_results=7)
+    res = collection.query(query_embeddings=emb, n_results=8)
     return books_df[
         (books_df["isbn13"].isin(res["ids"][0])) &
         (books_df["isbn13"] != isbn)
@@ -168,22 +210,20 @@ def book_card(book):
     st.markdown(f"""
     <div class="book-card">
         <div class="book-img">
-            <img src="{book['large_thumbnail']}" loading="lazy">
+            <img src="{book['large_thumbnail']}">
         </div>
         <div class="book-title">{book['title']}</div>
         <div class="book-author">{book['authors']}</div>
-        <div></div>
     </div>
     """, unsafe_allow_html=True)
 
     st.button(
         "View Details",
         key=f"view_{book['isbn13']}",
-        on_click=lambda: (
-            st.session_state.update(
-                page="detail",
-                current_book=book["isbn13"]
-            )
+        use_container_width=True,
+        on_click=lambda: st.session_state.update(
+            page="detail",
+            current_book=book["isbn13"]
         )
     )
 
@@ -194,46 +234,37 @@ def home():
     st.title("📚 AI Book Recommendation")
 
     with st.sidebar:
+    
+
+        query = st.text_input("Describe a book")
         category = st.selectbox(
             "Category",
             ["All"] + sorted(books_df["simple_categories"].dropna().unique())
         )
-        emotion = st.selectbox(
+        emotion_label = st.selectbox(
             "Emotion",
             ["All"] + list(EMOTION_MAP.keys())
         )
-        query = st.text_input("Describe a book")
 
-    if st.button("Search") and query:
-        st.session_state.results = recommend(query, category, emotion)
-        st.session_state.page_no = 1
+        search = st.button("🔍 Search", use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    if search and query:
+        emotion_col = EMOTION_MAP.get(emotion_label)
+        st.session_state.results = recommend(query, category, emotion_col)
 
     if "results" not in st.session_state:
         return
 
     results = st.session_state.results
-    page = st.session_state.page_no
-
-    start = (page - 1) * PAGE_SIZE
-    end = start + PAGE_SIZE
-
     cols = st.columns(4)
-    for i, (_, book) in enumerate(results.iloc[start:end].iterrows()):
+
+    for i, (_, book) in enumerate(results.head(PAGE_SIZE).iterrows()):
         with cols[i % 4]:
             book_card(book)
 
-    c1, _, c2 = st.columns([1, 6, 1])
-    with c1:
-        if page > 1 and st.button("⬅ Prev"):
-            st.session_state.page_no -= 1
-            st.rerun()
-    with c2:
-        if end < len(results) and st.button("Next ➡"):
-            st.session_state.page_no += 1
-            st.rerun()
-
 # =====================================================
-# DETAIL
+# DETAIL PAGE
 # =====================================================
 def detail():
     book = books_df[books_df["isbn13"] == st.session_state.current_book].iloc[0]
@@ -246,13 +277,18 @@ def detail():
     st.image(book["large_thumbnail"], width=260)
     st.write(book["description"])
 
-    st.subheader("📚 Similar Books")
-    sims = similar_books(book["description"], book["isbn13"])
+    st.subheader("🧠 Emotional Profile")
+    for label, col in EMOTION_MAP.items():
+        st.markdown(f"<div class='emotion-box'><strong>{label}</strong></div>", unsafe_allow_html=True)
+        st.progress(float(book[col]))
 
+    st.subheader("📚 Similar Books")
     cols = st.columns(4)
-    for i, (_, sim) in enumerate(sims.iterrows()):
+    for i, (_, sim) in enumerate(similar_books(book["description"], book["isbn13"]).iterrows()):
         with cols[i % 4]:
             book_card(sim)
+            
+
 
 # =====================================================
 # ROUTER
@@ -261,4 +297,3 @@ if st.session_state.page == "home":
     home()
 else:
     detail()
-    
